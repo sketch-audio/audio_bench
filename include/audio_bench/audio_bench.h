@@ -289,7 +289,12 @@ inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, c
 template<typename T>
 inline auto do_not_optimize(T& value) -> void
 {
+#if defined(_MSC_VER)
+    (void)value;
+    _ReadWriteBarrier();
+#else
     asm volatile("" : "+r,m"(value) : : "memory");
+#endif
 }
 
 enum class Bench_units { seconds, milliseconds, microseconds, nanoseconds };
@@ -311,7 +316,7 @@ inline auto units_name(Bench_units dur) -> std::string
     switch (dur) {
         case Bench_units::seconds: return "s";
         case Bench_units::milliseconds: return "ms";
-        case Bench_units::microseconds: return "µs";
+        case Bench_units::microseconds: return "us";
         case Bench_units::nanoseconds: return "ns";
     }
     return "";
@@ -381,7 +386,7 @@ struct Lambda_timer {
             _lambda();
             const auto end = std::chrono::high_resolution_clock::now();
             const auto dur = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-            _trials[i] = dur;
+            _trials[i] = static_cast<double>(dur);
         }
 
         std::ranges::sort(_trials);
