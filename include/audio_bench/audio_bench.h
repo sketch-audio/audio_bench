@@ -169,11 +169,13 @@ struct Rel_err { X value{1e-2f}; }; // Default: 1%
 template<typename X>
 using Err_value = std::variant<Abs_err<X>, Rel_err<X>>;
 
+namespace impl {
 template<typename X>
 inline auto get_err_value(const Err_value<X>& err) -> X
 {
     return std::visit([](const auto& e) { return e.value; }, err);
 }
+} // namespace impl
 
 // MARK: - tests
 
@@ -182,22 +184,24 @@ struct Test {
     std::function<void()> func{};
 };
 
+namespace impl {
 inline auto all_tests() -> std::vector<Test>&
 {
     static auto tests = std::vector<Test>{};
     return tests;
 }
+} // namespace impl
 
 inline auto add_test(std::string name, std::function<void()> func) -> void
 {
-    all_tests().push_back(Test{std::move(name), std::move(func)});
+    impl::all_tests().push_back(Test{std::move(name), std::move(func)});
 }
 
 inline auto run_all_tests() -> size_t
 {
-    std::cout << std::format("[TEST] Running {} tests...\n", all_tests().size());
+    std::cout << std::format("[TEST] Running {} tests...\n", impl::all_tests().size());
     auto num_failed = size_t{};
-    for (auto& [name, func] : all_tests()) {
+    for (auto& [name, func] : impl::all_tests()) {
         try {
             func();
             std::cout << "[PASS] " << name << "\n";
@@ -211,6 +215,8 @@ inline auto run_all_tests() -> size_t
     return num_failed;
 }
 
+// MARK: - expect
+
 inline auto expect_true(bool cond, const std::string& msg = {}) -> void
 {
     if (!cond) {
@@ -221,7 +227,7 @@ inline auto expect_true(bool cond, const std::string& msg = {}) -> void
 template<typename X>
 inline auto expect_close(X calc, X ref, const Err_value<X>& tol, const std::string& msg = {}) -> void
 {
-    const auto tol_val = get_err_value(tol);
+    const auto tol_val = impl::get_err_value(tol);
     const auto err_val = std::visit(Inline_visitor{
         [&](const Abs_err<X>&) { return abs_err(calc, ref); },
         [&](const Rel_err<X>&) { return rel_err(calc, ref); }
@@ -331,7 +337,6 @@ inline auto build_type_name() -> std::string
     return "Debug";
 #endif
 }
-
 } // namespace impl
 
 struct Bench_spec {
