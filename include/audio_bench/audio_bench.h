@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <numeric>
 #include <random>
 #include <ranges>
 #include <string>
