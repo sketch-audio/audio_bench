@@ -197,21 +197,23 @@ inline auto add_test(std::string name, std::function<void()> func) -> void
     impl::all_tests().push_back(Test{std::move(name), std::move(func)});
 }
 
-inline auto run_all_tests() -> size_t
+inline auto run_all_tests(bool print_passes = false) -> size_t
 {
-    std::cout << std::format("[TEST] Running {} tests...\n", impl::all_tests().size());
+    std::cout << std::format("\033[34m[TEST]\033[0m Running {} tests...\n", impl::all_tests().size());
     auto num_failed = size_t{};
     for (auto& [name, func] : impl::all_tests()) {
         try {
             func();
-            std::cout << "[PASS] " << name << "\n";
+            if (print_passes) {
+                std::cout << "\033[32m[PASS]\033[0m " << name << "\n";
+            }
         }
         catch (const std::exception& e) {
-            std::cout << "[FAIL] " << name << " " << e.what() << "\n";
+            std::cout << "\033[31m[FAIL]\033[0m " << name << " " << e.what() << "\n";
             ++num_failed;
         }
     }
-    std::cout << (num_failed == 0 ? "[TEST] All tests passed!\n" : std::format("{} tests failed.\n", num_failed));
+    std::cout << (num_failed == 0 ? "\033[34m[TEST]\033[0m All tests passed!\n" : std::format("{} tests failed.\n", num_failed));
     return num_failed;
 }
 
