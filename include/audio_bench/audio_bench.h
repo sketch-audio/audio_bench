@@ -99,6 +99,19 @@ inline auto make_dc(const Dc_spec<X>& spec) -> std::vector<X>
     return std::vector<X>(N, spec.amp);
 }
 
+template<typename X>
+inline auto make_range(X start, X end, size_t N) -> std::vector<X>
+{
+    if (N == 0) return {};
+    if (N == 1) return {start};
+    auto x = std::vector<X>(N);
+    const auto step = (end - start) / (N - 1);
+    for (size_t n = 0; n < N; ++n) {
+        x[n] = start + n * step;
+    }
+    return x;
+}
+
 // MARK: - analysis
 
 template<typename X>
