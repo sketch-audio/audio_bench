@@ -5,6 +5,7 @@
 #include <complex>
 #include <format>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <numbers>
@@ -434,5 +435,61 @@ private:
     std::vector<double> _trials{};
 
 };
+
+inline auto compare_benchmarks(const Bench_stats& b1, const Bench_stats& b2) -> void
+{
+    // Check if units match
+    if (b1.units != b2.units) {
+        std::cerr << "Error: Cannot compare benchmarks with different units ("
+                  << impl::units_name(b1.units) << " vs " << impl::units_name(b2.units) << ").\n";
+        return;
+    }
+
+    // Check for sufficient repetitions
+    if (b1.reps < 2 || b2.reps < 2) {
+        std::cerr << "Error: Insufficient repetitions (b1: " << b1.reps
+                  << ", b2: " << b2.reps << "). Need at least 2 for stddev.\n";
+        return;
+    }
+
+    // Welch's t-test
+    const auto mean_diff = b1.mean - b2.mean;
+    const auto var1 = b1.stddev * b1.stddev;
+    const auto var2 = b2.stddev * b2.stddev;
+    const auto se = std::sqrt(var1 / b1.reps + var2 / b2.reps); // Standard error
+
+    if (se == 0.0) {
+        std::cerr << "Error: Standard error is zero (possibly zero variance).\n";
+        return;
+    }
+
+    const auto t_stat = mean_diff / se;
+
+    // Approximate degrees of freedom (Satterthwaite)
+    const auto df = std::pow(var1 / b1.reps + var2 / b2.reps, 2) /
+                    (std::pow(var1 / b1.reps, 2) / (b1.reps - 1) +
+                     std::pow(var2 / b2.reps, 2) / (b2.reps - 1));
+
+    // Critical value for 95% confidence (~1.96 for large df)
+    const auto critical_t = (df > 100) ? 1.96 : 2.0;
+    const auto significant = std::abs(t_stat) > critical_t;
+
+    // Print simplified output
+    std::cout << std::fixed << std::setprecision(2);
+    if (significant) {
+        const auto faster = mean_diff < 0 ? b1.name : b2.name;
+        const auto slower = mean_diff < 0 ? b2.name : b1.name;
+        const auto ratio = mean_diff < 0 ? b2.mean / b1.mean : b1.mean / b2.mean;
+        std::cout << std::format(
+            "Benchmark '{}' is {:.2f}x faster than '{}' (t = {:.2f}, df = {:.0f}, p < 0.05)\n\n",
+            faster, ratio, slower, std::abs(t_stat), df
+        );
+    } else {
+        std::cout << std::format(
+            "No significant difference between benchmarks (t = {:.2f}, df = {:.0f}, p >= 0.05)\n\n",
+            std::abs(t_stat), df
+        );
+    }
+}
 
 } // namespace audio_bench
