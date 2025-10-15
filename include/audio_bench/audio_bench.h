@@ -227,21 +227,27 @@ inline auto run_all_tests(bool print_passes = false) -> size_t
             ++num_failed;
         }
     }
-    std::cout << (num_failed == 0 ? "\033[34m[TEST]\033[0m All tests passed!\n" : std::format("{} tests failed.\n", num_failed));
+    std::cout << "\033[34m[TEST]\033[0m " << (num_failed == 0 ? "All tests passed!\n" : std::format("{} tests failed.\n", num_failed));
     return num_failed;
 }
 
 // MARK: - expect
 
-inline auto expect_true(bool cond, const std::string& msg = {}) -> void
+inline auto expect_true(bool cond, const std::string& msg = {}, bool fail_throws = true) -> void
 {
     if (!cond) {
-        throw std::runtime_error(msg.empty() ? "Condition is false." : msg);
+        const auto out = msg.empty() ? "Condition is false." : msg;
+        if (fail_throws) {
+            throw std::runtime_error(out);
+        }
+        else {
+            std::cerr << out << std::endl;
+        }
     }
 }
 
 template<typename X>
-inline auto expect_close(X calc, X ref, const Err_value<X>& tol, const std::string& msg = {}) -> void
+inline auto expect_close(X calc, X ref, const Err_value<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
 {
     const auto tol_val = impl::get_err_value(tol);
     const auto err_val = std::visit(Inline_visitor{
@@ -249,27 +255,34 @@ inline auto expect_close(X calc, X ref, const Err_value<X>& tol, const std::stri
         [&](const Rel_err<X>&) { return rel_err(calc, ref); }
     }, tol);
     if (err_val > tol_val) {
-        throw std::runtime_error(std::format(
+        const auto out = std::format(
             "{}Got: {}, Ref: {}, Err: {}, Tol: {}",
-            msg.empty() ? "" : std::format("{} ", msg), calc, ref, err_val, tol_val
-        ));
+            msg.empty() ? "" : std::format("{} ", msg),
+            calc, ref, err_val, tol_val
+        );
+        if (fail_throws) {
+            throw std::runtime_error(out);
+        }
+        else {
+            std::cerr << out << std::endl;
+        }
     }
 }
 
 template<typename X>
-inline auto expect_close(X calc, X ref, const Abs_err<X>& tol, const std::string& msg = {}) -> void
+inline auto expect_close(X calc, X ref, const Abs_err<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
 {
-    expect_close(calc, ref, Err_value<X>{tol}, msg);
+    expect_close(calc, ref, Err_value<X>{tol}, msg, fail_throws);
 }
 
 template<typename X>
-inline auto expect_close(X calc, X ref, const Rel_err<X>& tol, const std::string& msg = {}) -> void
+inline auto expect_close(X calc, X ref, const Rel_err<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
 {
-    expect_close(calc, ref, Err_value<X>{tol}, msg);
+    expect_close(calc, ref, Err_value<X>{tol}, msg, fail_throws);
 }
 
 template<typename X>
-inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, const Rel_err<X>& tol = {}, const std::string& msg = {}) -> void
+inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, const Rel_err<X>& tol = {}, const std::string& msg = {}, bool fail_throws = true) -> void
 {
     if (x.empty()) { throw std::runtime_error("Signal is empty."); };
 
@@ -283,15 +296,21 @@ inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, cons
     const auto err = rel_err(calc_amp, amp); 
 
     if (err > tol.value) {
-        throw std::runtime_error(std::format(
+        const auto out = std::format(
             "{}Found amplitude: {:<.2f} for frequency: {:<.2f}, Expected: {:<.2f}, Err: {:<.2f}%, Tol: {:<.2f}%",
             msg.empty() ? "" : std::format("{} ", msg), calc_amp, freq, amp, 100 * err, 100 * tol.value
-        ));
+        );
+        if (fail_throws) {
+            throw std::runtime_error(out);
+        }
+        else {
+            std::cerr << out << std::endl;
+        }
     }
 }
 
 template<typename X>
-inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, const std::string& msg = {}) -> void
+inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, const std::string& msg = {}, bool fail_throws = true) -> void
 {
     if (x.empty()) { throw std::runtime_error("Signal is empty."); };
 
@@ -299,10 +318,16 @@ inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, c
     if (rms <= 0) return;
 
     if (rms > tol.value) {
-        throw std::runtime_error(std::format(
+        const auto out = std::format(
             "{}Found RMS: {:<.6f}, Tol: {:<.6f}",
             msg.empty() ? "" : std::format("{} ", msg), rms, tol.value
-        ));
+        );
+        if (fail_throws) {
+            throw std::runtime_error(out);
+        }
+        else {
+            std::cerr << out << std::endl;
+        }
     }
 }
 
