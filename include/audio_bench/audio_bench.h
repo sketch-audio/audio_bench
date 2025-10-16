@@ -20,11 +20,6 @@ namespace audio_bench {
 
 // MARK: - utils
 
-template<typename... Ts>
-struct Inline_visitor : Ts... {
-    using Ts::operator()...;
-};
-
 template<typename X>
 inline auto db_to_amp(X db) -> X
 {
@@ -184,6 +179,11 @@ template<typename X>
 using Err_value = std::variant<Abs_err<X>, Rel_err<X>>;
 
 namespace impl {
+template<typename... Ts>
+struct Inline_visitor : Ts... {
+    using Ts::operator()...;
+};
+
 template<typename X>
 inline auto get_err_value(const Err_value<X>& err) -> X
 {
@@ -250,7 +250,7 @@ template<typename X>
 inline auto expect_close(X calc, X ref, const Err_value<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
 {
     const auto tol_val = impl::get_err_value(tol);
-    const auto err_val = std::visit(Inline_visitor{
+    const auto err_val = std::visit(impl::Inline_visitor{
         [&](const Abs_err<X>&) { return abs_err(calc, ref); },
         [&](const Rel_err<X>&) { return rel_err(calc, ref); }
     }, tol);
