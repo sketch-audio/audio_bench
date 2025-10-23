@@ -348,12 +348,17 @@ inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, c
 
 // MARK: - benchmarks
 
+// See: https://github.com/google/benchmark/blob/main/src/benchmark.cc
+namespace {
+void const volatile* volatile global_force_escape_pointer;
+}
+
 // See: https://theunixzoo.co.uk/blog/2021-10-14-preventing-optimisations.html
 template<typename T>
 inline auto do_not_optimize(T& value) -> void
 {
 #if defined(_MSC_VER)
-    (void)value;
+    global_force_escape_pointer = &reinterpret_cast<char const volatile&>(value);
     _ReadWriteBarrier();
 #else
     asm volatile("" : "+r,m"(value) : : "memory");
