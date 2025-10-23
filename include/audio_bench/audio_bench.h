@@ -360,27 +360,27 @@ inline auto do_not_optimize(T& value) -> void
 #endif
 }
 
-enum class Bench_units { seconds, milliseconds, microseconds, nanoseconds };
+enum class Time_units { seconds, milliseconds, microseconds, nanoseconds };
 
 namespace impl {
-inline auto nanos_to(double x, Bench_units dur) -> double
+inline auto nanos_to(double x, Time_units dur) -> double
 {
     switch (dur) {
-        case Bench_units::seconds: return x * 1e-9;
-        case Bench_units::milliseconds: return x * 1e-6;
-        case Bench_units::microseconds: return x * 1e-3;
-        case Bench_units::nanoseconds: return x;
+        case Time_units::seconds: return x * 1e-9;
+        case Time_units::milliseconds: return x * 1e-6;
+        case Time_units::microseconds: return x * 1e-3;
+        case Time_units::nanoseconds: return x;
     }
     return x;
 }
 
-inline auto units_name(Bench_units dur) -> std::string
+inline auto units_name(Time_units dur) -> std::string
 {
     switch (dur) {
-        case Bench_units::seconds: return "s";
-        case Bench_units::milliseconds: return "ms";
-        case Bench_units::microseconds: return "us";
-        case Bench_units::nanoseconds: return "ns";
+        case Time_units::seconds: return "s";
+        case Time_units::milliseconds: return "ms";
+        case Time_units::microseconds: return "us";
+        case Time_units::nanoseconds: return "ns";
     }
     return "";
 }
@@ -396,9 +396,9 @@ inline auto build_type_name() -> std::string
 } // namespace impl
 
 struct Bench_spec {
-    size_t reps{1000};
-    size_t warmup{1000};
-    Bench_units units{Bench_units::microseconds};
+    size_t reps{100};
+    size_t warmup{100};
+    Time_units units{Time_units::microseconds};
 };
 
 struct Bench_stats {
@@ -410,7 +410,7 @@ struct Bench_stats {
     double min{};
     double median{};
     double max{};
-    Bench_units units{Bench_units::microseconds};
+    Time_units units{Time_units::microseconds};
 };
 
 inline auto print_bench_stats(const Bench_stats& stats) -> void
@@ -427,6 +427,16 @@ inline auto print_bench_stats(const Bench_stats& stats) -> void
         stats.median, impl::units_name(stats.units),
         stats.max, impl::units_name(stats.units)
     );
+}
+
+inline auto to_secs(double x, Time_units dur) -> double
+{
+    switch (dur) {
+        case Time_units::seconds: return x;
+        case Time_units::milliseconds: return x * 1e-3;
+        case Time_units::microseconds: return x * 1e-6;
+        case Time_units::nanoseconds: return x * 1e-9;
+    }
 }
 
 template<typename L>
@@ -489,7 +499,7 @@ private:
 
 };
 
-inline auto compare_benchmarks(const Bench_stats& b1, const Bench_stats& b2) -> void
+inline auto compare_bench_stats(const Bench_stats& b1, const Bench_stats& b2) -> void
 {
     // Check if units match
     if (b1.units != b2.units) {
