@@ -35,17 +35,16 @@ inline auto amp_to_db(X amp) -> X
 
 // MARK: - signals
 
-template<typename X>
 struct Sine_spec {
-    X freq{1000};
-    X amp{1};
-    X phase{};
-    X dur{1};
-    X sr{48000};
+    float freq{1000};
+    float amp{1};
+    float phase{};
+    float dur{1};
+    float sr{48000};
 };
 
 template<typename X>
-inline auto make_sine(const Sine_spec<X>& spec) -> std::vector<X>
+inline auto make_sine(const Sine_spec& spec) -> std::vector<X>
 {
     const auto N = static_cast<size_t>(spec.dur * spec.sr);
     auto x = std::vector<X>(N);
@@ -56,15 +55,14 @@ inline auto make_sine(const Sine_spec<X>& spec) -> std::vector<X>
     return x;
 }
 
-template<typename X>
 struct Noise_spec {
-    X amp{1};
-    X dur{1};
-    X sr{48000};
+    float amp{1};
+    float dur{1};
+    float sr{48000};
 };
 
 template<typename X>
-inline auto make_noise(const Noise_spec<X>& spec) -> std::vector<X>
+inline auto make_noise(const Noise_spec& spec) -> std::vector<X>
 {
     auto device = std::random_device{};
     auto gen = std::mt19937{device()};
@@ -80,29 +78,46 @@ inline auto make_noise(const Noise_spec<X>& spec) -> std::vector<X>
     return x;
 }
 
-template<typename X>
 struct Dc_spec {
-    X amp{1};
-    X dur{1};
-    X sr{48000};
+    float amp{1};
+    float dur{1};
+    float sr{48000};
 };
 
 template<typename X>
-inline auto make_dc(const Dc_spec<X>& spec) -> std::vector<X>
+inline auto make_dc(const Dc_spec& spec) -> std::vector<X>
 {
     const auto N = static_cast<size_t>(spec.dur * spec.sr);
     return std::vector<X>(N, spec.amp);
 }
 
+struct Silence_spec {
+    float dur{1};
+    float sr{48000};
+};
+
 template<typename X>
-inline auto make_range(X start, X end, size_t N) -> std::vector<X>
+inline auto make_silence(const Silence_spec& spec) -> std::vector<X>
 {
-    if (N == 0) return {};
-    if (N == 1) return {start};
-    auto x = std::vector<X>(N);
-    const auto step = (end - start) / (N - 1);
-    for (size_t n = 0; n < N; ++n) {
-        x[n] = start + n * step;
+    const auto N = static_cast<size_t>(spec.dur * spec.sr);
+    return std::vector<X>(N, X{0});
+}
+
+struct Range_spec {
+    float start{0};
+    float end{1};
+    size_t N{100};
+};
+
+template<typename X>
+inline auto make_range(const Range_spec& spec) -> std::vector<X>
+{
+    if (spec.N == 0) return {};
+    if (spec.N == 1) return {spec.start};
+    auto x = std::vector<X>(spec.N);
+    const auto step = (spec.end - spec.start) / (spec.N - 1);
+    for (size_t n = 0; n < spec.N; ++n) {
+        x[n] = spec.start + n * step;
     }
     return x;
 }
