@@ -359,7 +359,7 @@ struct Error_tracker {
     {
         update_accum(_abs, a, c, r, math::abs_err(c, r));
         update_accum(_rel, a, c, r, math::rel_err(c, r));
-        update_accum(_ulp, a, c, r, math::ulp_dist(c, r));
+        update_accum(_ulp, a, c, r, static_cast<X>(math::ulp_dist(c, r)));
 
         const auto bits = -static_cast<X>(math::bits_prec(c, r)); // Invert.
         if (bits != 0) {
