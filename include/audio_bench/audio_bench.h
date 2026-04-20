@@ -1,128 +1,271 @@
 #pragma once
 
+#include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <concepts>
+#include <cstdint>
+#include <cstddef>
 #include <format>
 #include <functional>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <numbers>
 #include <numeric>
 #include <random>
 #include <ranges>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
-namespace audio_bench {
+// MARK: - math
 
-// MARK: - utils
+namespace audio_bench::math {
 
-template<typename X>
+template<std::floating_point X>
 inline auto db_to_amp(X db) -> X
 {
     return std::pow(X{10}, db / 20);
 }
 
-template<typename X>
-inline auto amp_to_db(X amp) -> X
+template<std::floating_point X>
+inline auto amp_to_db(X amp, X noise_floor = -144) -> X
 {
-    if (amp <= 0) return -std::numeric_limits<X>::infinity();
+    if (amp <= 0) return noise_floor;
     return 20 * std::log10(amp);
+}
+
+template<std::floating_point X>
+inline auto abs_err(X calc, X ref) -> X
+{
+    return std::abs(calc - ref);
+}
+
+template<std::floating_point X>
+inline auto rel_err(X calc, X ref) -> X
+{
+    if (calc == ref) return 0;
+    if (calc == 0 && ref == 0) return std::numeric_limits<X>::infinity();
+    const auto ac = std::abs(calc);
+    const auto ar = std::abs(ref);
+    return std::abs(calc - ref) / std::max(ac, ar);
+}
+
+namespace impl {
+template<std::floating_point X>
+struct fp_traits;
+
+template<>
+struct fp_traits<float> {
+    using int_type = uint32_t;
+    static constexpr auto significand_bits = int_type{23};
+    static constexpr auto exponent_bits = int_type{8};
+    static constexpr auto significand_mask = (int_type{1} << significand_bits) - 1;
+    static constexpr auto exponent_mask = ((int_type{1} << exponent_bits) - 1) << significand_bits;
+};
+
+template<>
+struct fp_traits<double> {
+    using int_type = uint64_t;
+    static constexpr auto significand_bits = int_type{52};
+    static constexpr auto exponent_bits = int_type{11};
+    static constexpr auto significand_mask = (int_type{1} << significand_bits) - 1;
+    static constexpr auto exponent_mask = ((int_type{1} << exponent_bits) - 1) << significand_bits;
+};
+} // namespace impl
+
+template<std::floating_point X>
+inline auto bits_prec(X a, X b) -> typename impl::fp_traits<X>::int_type
+{
+    using traits = impl::fp_traits<X>;
+    using I = typename traits::int_type;
+
+    const auto ua = std::bit_cast<I>(a);
+    const auto ub = std::bit_cast<I>(b);
+
+    constexpr auto sign_and_exp_mask = ~traits::significand_mask;
+    if ((ua & sign_and_exp_mask) != (ub & sign_and_exp_mask)) {
+        return 0;
+    }
+
+    const auto diff = (ua ^ ub) & traits::significand_mask;
+    if (diff == 0) {
+        return traits::significand_bits;
+    }
+
+    constexpr auto total_bits = static_cast<I>(sizeof(I) * 8);
+    constexpr auto slack = total_bits - traits::significand_bits;
+    return static_cast<I>(std::countl_zero(diff)) - slack;
+}
+
+// see: https://www.emmtrix.com/wiki/ULP_Difference_of_Float_Numbers
+template<std::floating_point X>
+inline auto ulp_of(X x) -> X
+{
+    x = std::abs(x);
+    return std::nextafter(x, std::numeric_limits<X>::infinity()) - x;
+}
+
+// see: https://www.emmtrix.com/wiki/ULP_Difference_of_Float_Numbers
+template<std::floating_point X>
+inline auto ulp_dist(X f1, X f2) -> typename impl::fp_traits<X>::int_type
+{
+    if (std::signbit(f1) != std::signbit(f2)) {
+        return ulp_dist(std::abs(f1), X{}) + ulp_dist(std::abs(f2), X{}) + 1;
+    }
+
+    using I = typename impl::fp_traits<X>::int_type;
+    const auto u1 = std::bit_cast<I>(f1);
+    const auto u2 = std::bit_cast<I>(f2);
+
+    return u1 > u2 ? u1 - u2 : u2 - u1;
+};
+} // namespace audio_bench::math
+
+// MARK: - logging
+
+namespace audio_bench {
+inline auto log(const std::string& msg) -> void
+{
+    // Log [INFO] in yellow followed by msg arg
+    std::cout << "\033[33m[INFO]\033[0m " << msg << "\n";
+}
+
+// log with format string
+template<typename... Args>
+inline auto log(std::format_string<Args...> fmt, Args&&... args) -> void
+{
+    log(std::format(fmt, std::forward<Args>(args)...));
+}
 }
 
 // MARK: - signals
 
-struct Sine_spec {
-    float freq{1000};
-    float amp{1};
-    float phase{};
-    float dur{1};
-    float sr{48000};
-};
+namespace audio_bench::signals {
 
-template<typename X>
-inline auto make_sine(const Sine_spec& spec) -> std::vector<X>
-{
-    const auto N = static_cast<size_t>(spec.dur * spec.sr);
-    auto x = std::vector<X>(N);
-    for (size_t n = 0; n < N; ++n) {
-        const auto arg = n * spec.freq / spec.sr;
-        x[n] = spec.amp * std::sin(2 * std::numbers::pi_v<X> * arg + spec.phase);
+struct Silence {
+    struct Spec {
+        double dur{1}; // seconds
+    };
+
+    template<typename X>
+    static auto make(const Spec& spec, double sr) -> std::vector<X>
+    {
+        const auto N = static_cast<size_t>(spec.dur * sr);
+        return std::vector<X>(N, X{});
     }
-    return x;
-}
-
-struct Noise_spec {
-    float amp{1};
-    float dur{1};
-    float sr{48000};
 };
 
-template<typename X>
-inline auto make_noise(const Noise_spec& spec) -> std::vector<X>
-{
-    auto device = std::random_device{};
-    auto gen = std::mt19937{device()};
-    auto dist = std::uniform_real_distribution<X>{-1, 1};
+struct Constant {
+    struct Spec {
+        double amp{1};
+        double dur{1}; // seconds
+    };
 
-    const auto N = static_cast<size_t>(spec.dur * spec.sr);
-    auto x = std::vector<X>(N);
-
-    for (size_t n = 0; n < N; ++n) {
-        x[n] = spec.amp * dist(gen);
+    template<typename X>
+    static auto make(const Spec& spec, double sr) -> std::vector<X>
+    {
+        const auto N = static_cast<size_t>(spec.dur * sr);
+        return std::vector<X>(N, static_cast<X>(spec.amp));
     }
-
-    return x;
-}
-
-struct Dc_spec {
-    float amp{1};
-    float dur{1};
-    float sr{48000};
 };
 
-template<typename X>
-inline auto make_dc(const Dc_spec& spec) -> std::vector<X>
-{
-    const auto N = static_cast<size_t>(spec.dur * spec.sr);
-    return std::vector<X>(N, spec.amp);
-}
+struct Sine {
+    struct Spec {
+        double freq{1000};
+        double amp{1};
+        double phase{};
+        double dur{1}; // seconds
+    };
 
-struct Silence_spec {
-    float dur{1};
-    float sr{48000};
-};
-
-template<typename X>
-inline auto make_silence(const Silence_spec& spec) -> std::vector<X>
-{
-    const auto N = static_cast<size_t>(spec.dur * spec.sr);
-    return std::vector<X>(N, X{0});
-}
-
-struct Range_spec {
-    float start{0};
-    float end{1};
-    size_t N{100};
-};
-
-template<typename X>
-inline auto make_range(const Range_spec& spec) -> std::vector<X>
-{
-    if (spec.N == 0) return {};
-    if (spec.N == 1) return {spec.start};
-    auto x = std::vector<X>(spec.N);
-    const auto step = (spec.end - spec.start) / (spec.N - 1);
-    for (size_t n = 0; n < spec.N; ++n) {
-        x[n] = spec.start + n * step;
+    template<typename X>
+    static auto make(const Spec& spec, double sr) -> std::vector<X>
+    {
+        const auto N = static_cast<size_t>(spec.dur * sr);
+        auto x = std::vector<X>(N, X{});
+        for (size_t i = 0; i < N; ++i) {
+            const auto arg = i * spec.freq / sr;
+            const auto xi = spec.amp * std::sin(2 * std::numbers::pi_v<double> * arg + spec.phase);
+            x[i] = static_cast<X>(xi);
+        }
+        return x;
     }
-    return x;
-}
+};
+
+struct Noise {
+    struct Spec {
+        double amp{1};
+        double dur{1}; // seconds
+    };
+
+    template<typename X>
+    static auto make(const Spec& spec, double sr) -> std::vector<X>
+    {
+        const auto N = static_cast<size_t>(spec.dur * sr);
+        auto x = std::vector<X>(N, X{});
+        auto device = std::random_device{};
+        auto gen = std::mt19937{device()};
+        auto dist = std::uniform_real_distribution<X>{-1, 1};
+        for (size_t i = 0; i < N; ++i) {
+            x[i] = static_cast<X>(spec.amp) * dist(gen);
+        }
+        return x;
+    }
+};
+
+struct Impulse {
+    struct Spec {
+        double amp{1};
+        double dur{1}; // seconds
+    };
+
+    template<typename X>
+    static auto make(const Spec& spec, double sr) -> std::vector<X>
+    {
+        const auto N = static_cast<size_t>(spec.dur * sr);
+        auto x = std::vector<X>(N, X{});
+        if (!x.empty()) {
+            x[0] = static_cast<X>(spec.amp);
+        }
+        return x;
+    }
+};
+
+struct Range {
+    struct Spec {
+        double start{0};
+        double end{1};
+        size_t n{100};
+        bool inclusive{true}; // Whether the end value should be included in the range.
+    };
+
+    template<typename X>
+    static auto make(const Spec& spec) -> std::vector<X>
+    {
+        if (spec.n == 0) return {};
+        if (spec.n == 1) return {static_cast<X>(spec.start)};
+        auto x = std::vector<X>(spec.n);
+        const auto denom = spec.inclusive ? (spec.n - 1) : spec.n;
+        const auto step = (spec.end - spec.start) / denom;
+        for (size_t n = 0; n < spec.n; ++n) {
+            x[n] = static_cast<X>(spec.start + n * step);
+        }
+        if (spec.inclusive) {
+            x.back() = static_cast<X>(spec.end);
+        }
+        return x;
+    }
+};
+
+} // namespace audio_bench::signals
 
 // MARK: - analysis
+
+namespace audio_bench::analysis {
 
 template<typename X>
 inline auto freq_power_for(const std::vector<X>& x, X freq, X sr) -> X
@@ -132,7 +275,7 @@ inline auto freq_power_for(const std::vector<X>& x, X freq, X sr) -> X
     if (freq <= 0 || freq > sr / 2) return {};
 
     const auto N = x.size();
-    const auto omega = 2 * std::numbers::pi_v<X> * freq / sr;
+    const auto omega = 2 * std::numbers::pi_v<X> *freq / sr;
     const auto target = std::polar(X{1}, -omega);
 
     auto s0 = X{};
@@ -168,136 +311,256 @@ inline auto rms_for(const std::vector<X>& x) -> X
     return std::sqrt(sum_sq / N);
 }
 
-// MARK: - error
-
-template<typename X>
-inline auto abs_err(X calc, X ref) -> X
-{
-    return std::abs(calc - ref);
-}
-
-template<typename X>
-inline auto rel_err(X calc, X ref) -> X
-{
-    if (calc == ref) return 0;
-    if (ref == 0) return std::numeric_limits<X>::infinity();
-    return std::abs((calc - ref) / ref);
-}
-
-template<typename X>
-struct Abs_err { X value{1e-4f}; }; // Default: 0.0001 (-80 dB)
-
-template<typename X>
-struct Rel_err { X value{1e-2f}; }; // Default: 1%
-
-template<typename X>
-using Err_value = std::variant<Abs_err<X>, Rel_err<X>>;
-
-namespace impl {
-template<typename... Ts>
-struct Inline_visitor : Ts... {
-    using Ts::operator()...;
-};
-
-template<typename X>
-inline auto get_err_value(const Err_value<X>& err) -> X
-{
-    return std::visit([](const auto& e) { return e.value; }, err);
-}
-} // namespace impl
+} // namespace audio_bench::analysis
 
 // MARK: - tests
 
-struct Test {
-    std::string name{};
-    std::function<void()> func{};
+namespace audio_bench {
+
+struct Error {
+    // Absolute error.
+    struct Absolute {
+        double value{1e-4f}; // Default: 0.0001 (-80 dB)
+    };
+
+    // Relative error.
+    struct Relative {
+        double value{1e-2f}; // Default: 1%
+    };
+
+    // ULP distance.
+    struct Ulp_distance {
+        size_t value{10};
+    };
+
+    // Bits of precision.
+    struct Bits_precision {
+        size_t value{5};
+    };
+
+    using Any = std::variant<Absolute, Relative, Bits_precision, Ulp_distance>;
 };
 
-namespace impl {
-inline auto all_tests() -> std::vector<Test>&
-{
-    static auto tests = std::vector<Test>{};
-    return tests;
-}
-} // namespace impl
+template<std::floating_point X>
+struct Error_tracker {
+    
+    struct Accum {
+        X max{std::numeric_limits<X>::lowest()};
+        X sum{};
+        X sum_sq{};
+        size_t count{};
+        X arg_max{};
+        X calc_max{};
+        X ref_max{};
+    };
 
-inline auto add_test(std::string name, std::function<void()> func) -> void
-{
-    impl::all_tests().push_back(Test{std::move(name), std::move(func)});
-}
+    // Accumulate worst case errors.
+    auto update_with(X a, X c, X r) -> void
+    {
+        update_accum(_abs, a, c, r, math::abs_err(c, r));
+        update_accum(_rel, a, c, r, math::rel_err(c, r));
+        update_accum(_ulp, a, c, r, math::ulp_dist(c, r));
 
-inline auto run_all_tests(bool print_passes = false) -> size_t
-{
-    std::cout << std::format("\033[34m[TEST]\033[0m Running {} tests...\n", impl::all_tests().size());
-    auto num_failed = size_t{};
-    for (auto& [name, func] : impl::all_tests()) {
-        try {
-            func();
-            if (print_passes) {
-                std::cout << "\033[32m[PASS]\033[0m " << name << "\n";
-            }
-        }
-        catch (const std::exception& e) {
-            std::cout << "\033[31m[FAIL]\033[0m " << name << " " << e.what() << "\n";
-            ++num_failed;
+        const auto bits = -static_cast<X>(math::bits_prec(c, r)); // Invert.
+        if (bits != 0) {
+            update_accum(_bit, a, c, r, bits); 
+        } else {
+            _bit_zeros++;
         }
     }
-    std::cout << "\033[34m[TEST]\033[0m " << (num_failed == 0 ? "All tests passed!\n" : std::format("{} tests failed.\n", num_failed));
-    return num_failed;
-}
+
+    auto report() const -> void
+    {
+        const auto abs = finalize(_abs);
+        const auto rel = finalize(_rel);
+        const auto ulp = finalize(_ulp);
+        const auto bit = finalize(_bit);
+
+        log("---- Error Report ----");
+
+        log("Absolute error:");
+        log("  max: {:.2e}, mean: {:.2e}, rms: {:.2e}", abs.max, abs.mean, abs.rms);
+        log("  worst @ arg: {}, calc: {}, ref: {}", abs.arg, abs.calc, abs.ref);
+
+        log("Relative error:");
+        log("  max: {:.2e}, mean: {:.2e}, rms: {:.2e}", rel.max, rel.mean, rel.rms);
+        log("  worst @ arg: {}, calc: {}, ref: {}", rel.arg, rel.calc, rel.ref);
+
+        log("ULP distance:");
+        log("  max: {}, mean: {:.2e}, rms: {:.2e}", ulp.max, ulp.mean, ulp.rms);
+        log("  worst @ arg: {}, calc: {}, ref: {}", ulp.arg, ulp.calc, ulp.ref);
+
+        // remember: stored as negative bits
+        const auto min_bits = -bit.max;
+
+        log("Bits precision (non-zero):");
+        log("  min: {}, mean: {:.2e}, rms: {:.2e}", 
+            min_bits,
+            -bit.mean,
+            -bit.rms);
+        log("  worst @ arg: {}, calc: {}, ref: {}", bit.arg, bit.calc, bit.ref);
+        log("  zero count: {}", _bit_zeros);
+
+        log("----------------------");
+    }
+
+private:
+
+    Accum _abs{};
+    Accum _rel{};
+    Accum _ulp{};
+    Accum _bit{};
+    size_t _bit_zeros{};
+
+    auto update_accum(Accum& accum, X a, X c, X r, X err) -> void
+    {
+        accum.count++;
+        accum.sum += err;
+        accum.sum_sq += err * err;
+        if (err > accum.max) {
+            accum.max = err;
+            accum.arg_max = a;
+            accum.calc_max = c;
+            accum.ref_max = r;
+        }
+    }
+
+    auto finalize(const Accum& a) const
+    {
+        struct Stats {
+            X max;
+            X mean;
+            X rms;
+            X arg;
+            X calc;
+            X ref;
+        };
+
+        if (a.count == 0) {
+            return Stats{};
+        }
+
+        return Stats{
+            .max = a.max,
+            .mean = a.sum / X(a.count),
+            .rms = std::sqrt(a.sum_sq / X(a.count)),
+            .arg = a.arg_max,
+            .calc = a.calc_max,
+            .ref = a.ref_max
+        };
+    }
+};
+
+struct Tests {
+
+    struct Test {
+        std::string name{};
+        std::function<void()> func{};
+    };
+
+    static auto add(std::string name, std::function<void()> func) -> void
+    {
+        all().push_back(Test{std::move(name), std::move(func)});
+    }
+
+    static auto run_all() -> size_t
+    {
+        std::cout << std::format("\033[34m[TEST]\033[0m Running {} tests...\n", all().size());
+        auto num_failed = size_t{};
+        for (auto& [name, func] : all()) {
+            try {
+                func();
+                std::cout << "\033[32m[PASS]\033[0m " << name << "\n";
+            }
+            catch (const std::exception& e) {
+                std::cout << "\033[31m[FAIL]\033[0m " << name << " " << e.what() << "\n";
+                ++num_failed;
+            }
+        }
+        std::cout << "\033[34m[TEST]\033[0m " << (num_failed == 0 ? "All tests passed!\n" : std::format("{} tests failed.\n", num_failed));
+        return num_failed;
+    }
+
+
+private:
+    // All tests.
+    static auto all() -> std::vector<Test>&
+    {
+        static auto tests = std::vector<Test>{};
+        return tests;
+    }
+};
 
 // MARK: - expect
 
-inline auto expect_true(bool cond, const std::string& msg = {}, bool fail_throws = true) -> void
+inline auto expect_true(bool cond, const std::string& msg = {}) -> void
 {
     if (!cond) {
         const auto out = msg.empty() ? "Condition is false." : msg;
-        if (fail_throws) {
-            throw std::runtime_error(out);
-        }
-        else {
-            std::cerr << out << std::endl;
-        }
+        throw std::runtime_error(out);
     }
 }
 
+namespace impl {
+template<typename... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
+}
+
 template<typename X>
-inline auto expect_close(X calc, X ref, const Err_value<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
+inline auto expect_close(X calc, X ref, const Error::Any& tol, const std::string& msg = {}) -> void
 {
-    const auto tol_val = impl::get_err_value(tol);
-    const auto err_val = std::visit(impl::Inline_visitor{
-        [&](const Abs_err<X>&) { return abs_err(calc, ref); },
-        [&](const Rel_err<X>&) { return rel_err(calc, ref); }
+    const auto tol_val = std::visit([](const auto& e) { return static_cast<X>(e.value); }, tol);
+    
+    const auto err_val = std::visit(impl::overloaded{
+        [&](const Error::Absolute&) { return math::abs_err(calc, ref); },
+        [&](const Error::Relative&) { return math::rel_err(calc, ref); },
+        [&](const Error::Ulp_distance&) { return static_cast<X>(math::ulp_dist(calc, ref)); },
+        [&](const Error::Bits_precision&) { return static_cast<X>(math::bits_prec(calc, ref)); }
     }, tol);
-    if (err_val > tol_val) {
+
+    const auto success = std::visit(impl::overloaded{
+        [&](const Error::Bits_precision&) { return err_val >= tol_val; },
+        [&](const auto&) { return err_val <= tol_val; }
+    }, tol);
+
+    if (!success) {
         const auto out = std::format(
             "{}Got: {}, Ref: {}, Err: {}, Tol: {}",
             msg.empty() ? "" : std::format("{} ", msg),
             calc, ref, err_val, tol_val
         );
-        if (fail_throws) {
-            throw std::runtime_error(out);
-        }
-        else {
-            std::cerr << out << std::endl;
-        }
+        throw std::runtime_error(out);
     }
 }
 
+// ...
+
 template<typename X>
-inline auto expect_close(X calc, X ref, const Abs_err<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
+inline auto expect_close(X calc, X ref, const Error::Absolute& tol, const std::string& msg = {}) -> void
 {
-    expect_close(calc, ref, Err_value<X>{tol}, msg, fail_throws);
+    expect_close(calc, ref, Error::Any{tol}, msg);
 }
 
 template<typename X>
-inline auto expect_close(X calc, X ref, const Rel_err<X>& tol, const std::string& msg = {}, bool fail_throws = true) -> void
+inline auto expect_close(X calc, X ref, const Error::Relative& tol, const std::string& msg = {}) -> void
 {
-    expect_close(calc, ref, Err_value<X>{tol}, msg, fail_throws);
+    expect_close(calc, ref, Error::Any{tol}, msg);
 }
 
 template<typename X>
-inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, const Rel_err<X>& tol = {}, const std::string& msg = {}, bool fail_throws = true) -> void
+inline auto expect_close(X calc, X ref, const Error::Bits_precision& tol, const std::string& msg = {}) -> void
+{
+    expect_close(calc, ref, Error::Any{tol}, msg);
+}
+
+template<typename X>
+inline auto expect_close(X calc, X ref, const Error::Ulp_distance& tol, const std::string& msg = {}) -> void
+{
+    expect_close(calc, ref, Error::Any{tol}, msg);
+}
+
+template<typename X>
+inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, const Error::Relative& tol = {}, const std::string& msg = {}) -> void
 {
     if (x.empty()) { throw std::runtime_error("Signal is empty."); };
 
@@ -308,24 +571,19 @@ inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, cons
     if (rms <= 0) { throw std::runtime_error("Signal RMS is zero."); };
 
     const auto calc_amp = std::sqrt(2 * power_at_freq);
-    const auto err = rel_err(calc_amp, amp); 
+    const auto err = rel_err(calc_amp, amp);
 
     if (err > tol.value) {
         const auto out = std::format(
             "{}Found amplitude: {:<.2f} for frequency: {:<.2f}, Expected: {:<.2f}, Err: {:<.2f}%, Tol: {:<.2f}%",
             msg.empty() ? "" : std::format("{} ", msg), calc_amp, freq, amp, 100 * err, 100 * tol.value
         );
-        if (fail_throws) {
-            throw std::runtime_error(out);
-        }
-        else {
-            std::cerr << out << std::endl;
-        }
+        throw std::runtime_error(out);
     }
 }
 
 template<typename X>
-inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, const std::string& msg = {}, bool fail_throws = true) -> void
+inline auto expect_silent(const std::vector<X>& x, const Error::Absolute& tol = {}, const std::string& msg = {}) -> void
 {
     if (x.empty()) { throw std::runtime_error("Signal is empty."); };
 
@@ -337,16 +595,15 @@ inline auto expect_silent(const std::vector<X>& x, const Abs_err<X>& tol = {}, c
             "{}Found RMS: {:<.6f}, Tol: {:<.6f}",
             msg.empty() ? "" : std::format("{} ", msg), rms, tol.value
         );
-        if (fail_throws) {
-            throw std::runtime_error(out);
-        }
-        else {
-            std::cerr << out << std::endl;
-        }
+        throw std::runtime_error(out);
     }
 }
 
+} // namespace audio_bench
+
 // MARK: - benchmarks
+
+namespace audio_bench {
 
 // See: https://github.com/google/benchmark/blob/main/src/benchmark.cc
 namespace {
@@ -365,91 +622,134 @@ inline auto do_not_optimize(T& value) -> void
 #endif
 }
 
-enum class Time_units { seconds, milliseconds, microseconds, nanoseconds };
+struct Benchmark {
+    // Display units.
+    enum class Units { Seconds, Milliseconds, Microseconds, Nanoseconds };
 
-namespace impl {
-inline auto nanos_to(double x, Time_units dur) -> double
-{
-    switch (dur) {
-        case Time_units::seconds: return x * 1e-9;
-        case Time_units::milliseconds: return x * 1e-6;
-        case Time_units::microseconds: return x * 1e-3;
-        case Time_units::nanoseconds: return x;
+    // Run specification.
+    struct Spec {
+        size_t reps{100};
+        size_t warmup{100};
+    };
+
+    // Run statistics.
+    struct Stats {
+        std::string name{};
+        size_t reps{};
+        size_t warmup{};
+        double mean{};
+        double stddev{};
+        double min{};
+        double median{};
+        double max{};
+    };
+
+    static auto print(const Stats& stats, Units units) -> void
+    {
+        std::cout << std::format(
+            "Stats for benchmark: '{}' (build type: {})\n"
+            "---- Reps: {}, Warmup: {}\n"
+            "---- Mean: {:<.3f} {}, Std. Dev.: {:<.3f} {}, Min: {:<.3f} {}, Median: {:<.3f} {}, Max: {:<.3f} {}\n\n",
+            stats.name, build_type_name(),
+            stats.reps, stats.warmup,
+            nanos_to(stats.mean, units), units_name(units),
+            nanos_to(stats.stddev, units), units_name(units),
+            nanos_to(stats.min, units), units_name(units),
+            nanos_to(stats.median, units), units_name(units),
+            nanos_to(stats.max, units), units_name(units)
+        );
     }
-    return x;
-}
 
-inline auto units_name(Time_units dur) -> std::string
-{
-    switch (dur) {
-        case Time_units::seconds: return "s";
-        case Time_units::milliseconds: return "ms";
-        case Time_units::microseconds: return "us";
-        case Time_units::nanoseconds: return "ns";
+    static auto compare(const Stats& b1, const Stats& b2) -> void
+    {
+        // Check for sufficient repetitions
+        if (b1.reps < 2 || b2.reps < 2) {
+            std::cerr << "Error: Insufficient repetitions (b1: " << b1.reps
+                << ", b2: " << b2.reps << "). Need at least 2 for stddev.\n";
+            return;
+        }
+
+        // Welch's t-test
+        const auto mean_diff = b1.mean - b2.mean;
+        const auto var1 = b1.stddev * b1.stddev;
+        const auto var2 = b2.stddev * b2.stddev;
+        const auto se = std::sqrt(var1 / b1.reps + var2 / b2.reps); // Standard error
+
+        if (se == 0.0) {
+            std::cerr << "Error: Standard error is zero (possibly zero variance).\n";
+            return;
+        }
+
+        const auto t_stat = mean_diff / se;
+
+        // Approximate degrees of freedom (Satterthwaite)
+        const auto df = std::pow(var1 / b1.reps + var2 / b2.reps, 2) /
+            (std::pow(var1 / b1.reps, 2) / (b1.reps - 1) +
+                std::pow(var2 / b2.reps, 2) / (b2.reps - 1));
+
+        // Critical value for 95% confidence (~1.96 for large df)
+        const auto critical_t = (df > 100) ? 1.96 : 2.0;
+        const auto significant = std::abs(t_stat) > critical_t;
+
+        // Print simplified output
+        if (significant) {
+            const auto faster = mean_diff < 0 ? b1.name : b2.name;
+            const auto slower = mean_diff < 0 ? b2.name : b1.name;
+            const auto ratio = mean_diff < 0 ? b2.mean / b1.mean : b1.mean / b2.mean;
+            std::cout << std::format(
+                "Benchmark '{}' is {:.2f}x faster than '{}' (t = {:.2f}, df = {:.0f}, p < 0.05)\n\n",
+                faster, ratio, slower, std::abs(t_stat), df
+            );
+        }
+        else {
+            std::cout << std::format(
+                "No significant difference between benchmarks (t = {:.2f}, df = {:.0f}, p >= 0.05)\n\n",
+                std::abs(t_stat), df
+            );
+        }
     }
-    return "";
-}
 
-inline auto build_type_name() -> std::string
-{
+private:
+
+    static auto nanos_to(double x, Units dur) -> double
+    {
+        switch (dur) {
+            case Units::Seconds: return x * 1e-9;
+            case Units::Milliseconds: return x * 1e-6;
+            case Units::Microseconds: return x * 1e-3;
+            case Units::Nanoseconds: return x;
+        }
+        return x;
+    }
+
+    static auto units_name(Units dur) -> std::string
+    {
+        switch (dur) {
+            case Units::Seconds: return "s";
+            case Units::Milliseconds: return "ms";
+            case Units::Microseconds: return "us";
+            case Units::Nanoseconds: return "ns";
+        }
+        return "";
+    }
+
+    static auto build_type_name() -> std::string
+    {
 #ifdef NDEBUG
-    return "Release";
+        return "Release";
 #else
-    return "Debug";
+        return "Debug";
 #endif
-}
-} // namespace impl
-
-struct Bench_spec {
-    size_t reps{100};
-    size_t warmup{100};
-    Time_units units{Time_units::microseconds};
-};
-
-struct Bench_stats {
-    std::string name{};
-    size_t reps{};
-    size_t warmup{};
-    double mean{};
-    double stddev{};
-    double min{};
-    double median{};
-    double max{};
-    Time_units units{Time_units::microseconds};
-};
-
-inline auto print_bench_stats(const Bench_stats& stats) -> void
-{
-    std::cout << std::format(
-        "Stats for benchmark: '{}' (build type: {})\n"
-        "---- Reps: {}, Warmup: {}\n"
-        "---- Mean: {:<.3f} {}, Std. Dev.: {:<.3f} {}, Min: {:<.3f} {}, Median: {:<.3f} {}, Max: {:<.3f} {}\n\n",
-        stats.name, impl::build_type_name(),
-        stats.reps, stats.warmup,
-        stats.mean, impl::units_name(stats.units),
-        stats.stddev, impl::units_name(stats.units),
-        stats.min, impl::units_name(stats.units),
-        stats.median, impl::units_name(stats.units),
-        stats.max, impl::units_name(stats.units)
-    );
-}
-
-inline auto to_secs(double x, Time_units dur) -> double
-{
-    switch (dur) {
-        case Time_units::seconds: return x;
-        case Time_units::milliseconds: return x * 1e-3;
-        case Time_units::microseconds: return x * 1e-6;
-        case Time_units::nanoseconds: return x * 1e-9;
     }
-}
+};
 
 template<typename L>
-struct Lambda_timer {
+class Timer {
+public:
 
-    Lambda_timer(const std::string& name, L&& l) : _name{name}, _lambda{l} {}
+    Timer(const std::string& name, L&& l) : _name{name}, _lambda{l} {}
 
-    auto run(const Bench_spec& spec) -> Bench_stats
+    auto run(const Benchmark::Spec& spec) -> Benchmark::Stats
     {
         _trials.assign(spec.reps, 0);
 
@@ -487,12 +787,11 @@ struct Lambda_timer {
             .name = _name,
             .reps = spec.reps,
             .warmup = spec.warmup,
-            .mean = impl::nanos_to(mean, spec.units),
-            .stddev = impl::nanos_to(stddev, spec.units),
-            .min = impl::nanos_to(min_val, spec.units),
-            .median = impl::nanos_to(median, spec.units),
-            .max = impl::nanos_to(max_val, spec.units),
-            .units = spec.units
+            .mean = mean,
+            .stddev = stddev,
+            .min = min_val,
+            .median = median,
+            .max = max_val,
         };
     }
 
@@ -503,61 +802,5 @@ private:
     std::vector<double> _trials{};
 
 };
-
-inline auto compare_bench_stats(const Bench_stats& b1, const Bench_stats& b2) -> void
-{
-    // Check if units match
-    if (b1.units != b2.units) {
-        std::cerr << "Error: Cannot compare benchmarks with different units ("
-                  << impl::units_name(b1.units) << " vs " << impl::units_name(b2.units) << ").\n";
-        return;
-    }
-
-    // Check for sufficient repetitions
-    if (b1.reps < 2 || b2.reps < 2) {
-        std::cerr << "Error: Insufficient repetitions (b1: " << b1.reps
-                  << ", b2: " << b2.reps << "). Need at least 2 for stddev.\n";
-        return;
-    }
-
-    // Welch's t-test
-    const auto mean_diff = b1.mean - b2.mean;
-    const auto var1 = b1.stddev * b1.stddev;
-    const auto var2 = b2.stddev * b2.stddev;
-    const auto se = std::sqrt(var1 / b1.reps + var2 / b2.reps); // Standard error
-
-    if (se == 0.0) {
-        std::cerr << "Error: Standard error is zero (possibly zero variance).\n";
-        return;
-    }
-
-    const auto t_stat = mean_diff / se;
-
-    // Approximate degrees of freedom (Satterthwaite)
-    const auto df = std::pow(var1 / b1.reps + var2 / b2.reps, 2) /
-                    (std::pow(var1 / b1.reps, 2) / (b1.reps - 1) +
-                     std::pow(var2 / b2.reps, 2) / (b2.reps - 1));
-
-    // Critical value for 95% confidence (~1.96 for large df)
-    const auto critical_t = (df > 100) ? 1.96 : 2.0;
-    const auto significant = std::abs(t_stat) > critical_t;
-
-    // Print simplified output
-    std::cout << std::fixed << std::setprecision(2);
-    if (significant) {
-        const auto faster = mean_diff < 0 ? b1.name : b2.name;
-        const auto slower = mean_diff < 0 ? b2.name : b1.name;
-        const auto ratio = mean_diff < 0 ? b2.mean / b1.mean : b1.mean / b2.mean;
-        std::cout << std::format(
-            "Benchmark '{}' is {:.2f}x faster than '{}' (t = {:.2f}, df = {:.0f}, p < 0.05)\n\n",
-            faster, ratio, slower, std::abs(t_stat), df
-        );
-    } else {
-        std::cout << std::format(
-            "No significant difference between benchmarks (t = {:.2f}, df = {:.0f}, p >= 0.05)\n\n",
-            std::abs(t_stat), df
-        );
-    }
-}
 
 } // namespace audio_bench
