@@ -64,7 +64,14 @@ A single-header C++20 library for testing and benchmarking audio DSP code.
 ## Integration
 
 ```cmake
-add_subdirectory(audio_bench)
+include(FetchContent)
+FetchContent_Declare(
+    audio_bench
+    GIT_REPOSITORY https://github.com/sketch-audio/audio_bench.git
+    GIT_TAG        main
+)
+FetchContent_MakeAvailable(audio_bench)
+
 target_link_libraries(your_target PRIVATE audio_bench)
 ```
 
