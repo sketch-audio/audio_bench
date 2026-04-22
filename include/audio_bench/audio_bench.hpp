@@ -571,7 +571,7 @@ inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, cons
     if (rms <= 0) { throw std::runtime_error("Signal RMS is zero."); };
 
     const auto calc_amp = std::sqrt(2 * power_at_freq);
-    const auto err = rel_err(calc_amp, amp);
+    const auto err = math::rel_err(calc_amp, amp);
 
     if (err > tol.value) {
         const auto out = std::format(
