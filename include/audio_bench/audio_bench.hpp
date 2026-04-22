@@ -564,10 +564,10 @@ inline auto expect_sinusoidal(const std::vector<X>& x, X freq, X amp, X sr, cons
 {
     if (x.empty()) { throw std::runtime_error("Signal is empty."); };
 
-    const auto power_at_freq = freq_power_for(x, freq, sr);
+    const auto power_at_freq = analysis::freq_power_for(x, freq, sr);
     if (power_at_freq <= 0) { throw std::runtime_error("Signal is not periodic."); };
 
-    const auto rms = rms_for(x);
+    const auto rms = analysis::rms_for(x);
     if (rms <= 0) { throw std::runtime_error("Signal RMS is zero."); };
 
     const auto calc_amp = std::sqrt(2 * power_at_freq);
@@ -587,7 +587,7 @@ inline auto expect_silent(const std::vector<X>& x, const Error::Absolute& tol = 
 {
     if (x.empty()) { throw std::runtime_error("Signal is empty."); };
 
-    const auto rms = rms_for(x);
+    const auto rms = analysis::rms_for(x);
     if (rms <= 0) return;
 
     if (rms > tol.value) {
