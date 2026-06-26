@@ -291,7 +291,7 @@ inline auto freq_power_for(const std::vector<X>& x, X freq, X sr) -> X
     const auto y = std::complex<X>{s0, 0} - target * std::complex<X>{s1, 0};
 
     const auto mag_sq = std::norm(y);
-    return 2 * mag_sq / (N * N);
+    return 2 * mag_sq / static_cast<X>(N * N);
 }
 
 template<typename X>
@@ -308,7 +308,7 @@ inline auto rms_for(const std::vector<X>& x) -> X
     if (x.empty()) return {};
     const auto N = x.size();
     const auto sum_sq = std::accumulate(x.begin(), x.end(), X{}, [](X acc, X val) { return acc + val * val; });
-    return std::sqrt(sum_sq / N);
+    return std::sqrt(sum_sq / static_cast<X>(N));
 }
 
 } // namespace audio_bench::analysis
