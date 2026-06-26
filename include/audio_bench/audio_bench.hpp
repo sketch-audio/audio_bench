@@ -188,7 +188,7 @@ struct Sine {
         const auto N = static_cast<size_t>(spec.dur * sr);
         auto x = std::vector<X>(N, X{});
         for (size_t i = 0; i < N; ++i) {
-            const auto arg = i * spec.freq / sr;
+            const auto arg = static_cast<double>(i) * spec.freq / sr;
             const auto xi = spec.amp * std::sin(2 * std::numbers::pi_v<double> * arg + spec.phase);
             x[i] = static_cast<X>(xi);
         }
@@ -250,9 +250,9 @@ struct Range {
         if (spec.n == 1) return {static_cast<X>(spec.start)};
         auto x = std::vector<X>(spec.n);
         const auto denom = spec.inclusive ? (spec.n - 1) : spec.n;
-        const auto step = (spec.end - spec.start) / denom;
+        const auto step = (spec.end - spec.start) / static_cast<double>(denom);
         for (size_t n = 0; n < spec.n; ++n) {
-            x[n] = static_cast<X>(spec.start + n * step);
+            x[n] = static_cast<X>(spec.start + static_cast<double>(n) * step);
         }
         if (spec.inclusive) {
             x.back() = static_cast<X>(spec.end);
@@ -673,7 +673,10 @@ struct Benchmark {
         const auto mean_diff = b1.mean - b2.mean;
         const auto var1 = b1.stddev * b1.stddev;
         const auto var2 = b2.stddev * b2.stddev;
-        const auto se = std::sqrt(var1 / b1.reps + var2 / b2.reps); // Standard error
+        const auto reps1 = static_cast<double>(b1.reps);
+        const auto reps2 = static_cast<double>(b2.reps);
+        
+        const auto se = std::sqrt(var1 / reps1 + var2 / reps2); // Standard error
 
         if (se == 0.0) {
             std::cerr << "Error: Standard error is zero (possibly zero variance).\n";
@@ -683,9 +686,9 @@ struct Benchmark {
         const auto t_stat = mean_diff / se;
 
         // Approximate degrees of freedom (Satterthwaite)
-        const auto df = std::pow(var1 / b1.reps + var2 / b2.reps, 2) /
-            (std::pow(var1 / b1.reps, 2) / (b1.reps - 1) +
-                std::pow(var2 / b2.reps, 2) / (b2.reps - 1));
+        const auto df = std::pow(var1 / reps1 + var2 / reps2, 2) /
+            (std::pow(var1 / reps1, 2) / (reps1 - 1) +
+                std::pow(var2 / reps2, 2) / (reps2 - 1));
 
         // Critical value for 95% confidence (~1.96 for large df)
         const auto critical_t = (df > 100) ? 1.96 : 2.0;
@@ -718,8 +721,8 @@ private:
             case Units::Milliseconds: return x * 1e-6;
             case Units::Microseconds: return x * 1e-3;
             case Units::Nanoseconds: return x;
+            default: return x;
         }
-        return x;
     }
 
     static auto units_name(Units dur) -> std::string
@@ -729,8 +732,8 @@ private:
             case Units::Milliseconds: return "ms";
             case Units::Microseconds: return "us";
             case Units::Nanoseconds: return "ns";
+            default: return "";
         }
-        return "";
     }
 
     static auto build_type_name() -> std::string
@@ -768,7 +771,7 @@ public:
 
         std::ranges::sort(_trials);
         const auto sum = std::accumulate(_trials.begin(), _trials.end(), double{});
-        const auto mean = sum / spec.reps;
+        const auto mean = sum / static_cast<double>(spec.reps);
 
         const auto stddev = [&]() {
             auto result = double{};
@@ -776,7 +779,7 @@ public:
                 const auto dt = t - mean;
                 result += dt * dt;
             }
-            return std::sqrt(result / spec.reps);
+            return std::sqrt(result / static_cast<double>(spec.reps));
         }();
 
         const auto median = _trials[spec.reps / 2];
